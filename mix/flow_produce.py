@@ -11,7 +11,7 @@ def write_random_numbers_to_file(line_count, filename):
         file.write(str(line_count) + '\n')
         for _ in range(line_count):
             # 生成一个0到1之间的随机浮点数,表示通信时间占用的比例
-            ratio = random.uniform(0.2,0.4)
+            ratio = random.uniform(0.4,0.6)
             bits_per_iteration = random.randint(1e7, 1e8)
             iteration = random.randint(1e1, 1e1)
             total_bytes = iteration * bits_per_iteration
