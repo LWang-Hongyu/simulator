@@ -28,6 +28,34 @@ public:
 	Time m_nextAvail;	//< Soonest time of next send
 	uint32_t wp; // current window of packets
 	uint32_t lastPktSize;
+
+	/***********************
+	 * DNN dcqcn Scheduler
+	 ***********************/
+	uint64_t bytes_per_iteration;
+	Time Iteration;
+	//Time endTime;
+	/***********************
+	 * DNN dcqcn Scheduler
+	 ***********************/
+
+	/*************MLTCP********/
+	uint32_t total_bytes;//Setted bytes
+	double bytes_ratio;//Current fraction of bytes sent in this iteration
+	double bytes_sent;//Number of successfully sent bytes
+	Time INIT_COMM_GAP;//
+	Time prev_ack_tstamp;//Timestamp of the previou
+	Time inter_gap;//Estimated iteration gap
+	Time max_gap;//Maximum communication gap observed in the iteration
+	double g;//Noise tolerance in detecting iteration gap
+	double y;//EWMA factor
+	double T;//parameter
+	double S;//parameter
+	uint32_t bytes_per_interation;//Bytes in reality
+	Time Interation;//Interation in reality
+	/*************MLTCP********/
+	
+
 	Callback<void> m_notifyAppFinish;
 
 	/******************************
@@ -90,6 +118,7 @@ public:
 	void SetBaseRtt(uint64_t baseRtt);
 	void SetVarWin(bool v);
 	void SetAppNotifyCallback(Callback<void> notifyAppFinish);
+	void SetIter(uint64_t bytes_iter,uint64_t gap);
 
 	uint64_t GetBytesLeft();
 	uint64_t GetBytesSended();

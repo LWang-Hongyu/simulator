@@ -12,9 +12,10 @@
 #include "ppp-header.h"
 #include "qbb-header.h"
 #include "cn-header.h"
-/***************UnfairDNNSchduler***********/
-#include "ns3/cmsketch.h"
-/***************UnfairDNNSchduler***********/
+// /***************UnfairDNNSchduler***********/
+// #include "ns3/cmsketch.h"
+// #include <iostream>
+// /***************UnfairDNNSchduler***********/
 
 namespace ns3{
 
@@ -177,16 +178,29 @@ TypeId RdmaHw::GetTypeId (void)
 				UintegerValue(65536),
 				MakeUintegerAccessor(&RdmaHw::pint_smpl_thresh),
 				MakeUintegerChecker<uint32_t>())
+		.AddAttribute("MLTCP",
+			"MLTCP or not",
+			BooleanValue(false),
+			MakeBooleanAccessor(&RdmaHw::m_mltcp),
+			MakeBooleanChecker())
 		;
 	return tid;
 }
-
-RdmaHw::RdmaHw(){
-	/***************UnfairDNNSchduler***********/
-	cms.cms_init(&cms, 100000, 7);
-	//fflush(stdout);
-	/***************UnfairDNNSchduler***********/
+/******************MLTCP************/
+bool MAX(Time timstep1,Time timstep2){
+	if (timstep1>timstep2)
+		return true;
+	else
+		return false;
 }
+double MIN(double a,double b){
+	if(a>b)
+		return b;
+	else 
+		return a;
+}
+/******************MLTCP************/
+RdmaHw::RdmaHw(){}
 
 void RdmaHw::SetNode(Ptr<Node> node){
 	m_node = node;
@@ -236,6 +250,44 @@ void RdmaHw::AddQueuePair(uint64_t size, uint16_t pg, Ipv4Address sip, Ipv4Addre
 	qp->SetVarWin(m_var_win);
 	qp->SetAppNotifyCallback(notifyAppFinish);
 
+	// add qp
+	uint32_t nic_idx = GetNicIdxOfQp(qp);
+	m_nic[nic_idx].qpGrp->AddQp(qp);
+	uint64_t key = GetQpKey(dip.Get(), sport, pg);
+	m_qpMap[key] = qp;
+
+	// set init variables
+	DataRate m_bps = m_nic[nic_idx].dev->GetDataRate();
+	qp->m_rate = m_bps;
+	qp->m_max_rate = m_bps;
+	if (m_cc_mode == 1){
+		qp->mlx.m_targetRate = m_bps;
+	}else if (m_cc_mode == 3){
+		qp->hp.m_curRate = m_bps;
+		if (m_multipleRate){
+			for (uint32_t i = 0; i < IntHeader::maxHop; i++)
+				qp->hp.hopState[i].Rc = m_bps;
+		}
+	}else if (m_cc_mode == 7){
+		qp->tmly.m_curRate = m_bps;
+	}else if (m_cc_mode == 10){
+		qp->hpccPint.m_curRate = m_bps;
+	}
+
+	// Notify Nic
+	m_nic[nic_idx].dev->NewQp(qp);
+}
+void RdmaHw::AddQueuePair(uint64_t size, uint16_t pg, Ipv4Address sip, Ipv4Address dip, uint16_t sport, uint16_t dport, uint32_t win, uint64_t baseRtt, uint64_t bytes_iter,uint64_t gap,Callback<void> notifyAppFinish){
+	// create qp
+	Ptr<RdmaQueuePair> qp = CreateObject<RdmaQueuePair>(pg, sip, dip, sport, dport);
+	qp->SetSize(size);
+	qp->SetWin(win);
+	qp->SetBaseRtt(baseRtt);
+	qp->SetVarWin(m_var_win);
+	qp->SetAppNotifyCallback(notifyAppFinish);
+	/********DCQCN DNN Scheduler******/
+	qp->SetIter(bytes_iter,gap);
+	/********DCQCN DNN Scheduler******/
 	// add qp
 	uint32_t nic_idx = GetNicIdxOfQp(qp);
 	m_nic[nic_idx].qpGrp->AddQp(qp);
@@ -404,6 +456,26 @@ int RdmaHw::ReceiveAck(Ptr<Packet> p, CustomHeader &ch){
 		std::cout << "ERROR: " << "node:" << m_node->GetId() << ' ' << (ch.l3Prot == 0xFC ? "ACK" : "NACK") << " NIC cannot find the flow\n";
 		return 0;
 	}
+	/************MLTCP***********/
+	if(m_mltcp){
+		qp->bytes_sent+=m_mtu;
+		Time curr_ack_tstamp=Simulator::Now();
+		Time curr_gap=curr_ack_tstamp-qp->prev_ack_tstamp;
+		qp->max_gap=MAX(qp->max_gap,curr_gap)?qp->max_gap:curr_gap;
+		if(curr_gap>Seconds(qp->g*qp->inter_gap.GetSeconds()))
+		{
+			qp->inter_gap=Seconds((1-qp->y)*qp->inter_gap.GetSeconds()+qp->y*qp->max_gap.GetSeconds());//Updating estimate for 𝑖𝑡𝑒𝑟 _𝑔𝑎𝑝
+			qp->bytes_ratio=0;
+			qp->bytes_sent=0;
+			qp->max_gap=qp->INIT_COMM_GAP;
+		}
+		else{
+			qp->bytes_ratio=MIN(1,qp->bytes_sent/qp->total_bytes);
+			std ::cout<<"[debug] qp:"<<qp->sip<<" ratio:"<<qp->bytes_ratio<<" at:"<<Now()<<std::endl;
+		}
+		qp->prev_ack_tstamp=curr_ack_tstamp;
+	}
+	/************MLTCP***********/
 
 	uint32_t nic_idx = GetNicIdxOfQp(qp);
 	Ptr<QbbNetDevice> dev = m_nic[nic_idx].dev;
@@ -575,6 +647,13 @@ Ptr<Packet> RdmaHw::GetNxtPacket(Ptr<RdmaQueuePair> qp){
 	ipHeader.SetPayloadSize (p->GetSize());
 	ipHeader.SetTtl (64);
 	ipHeader.SetTos (0);
+	/*DNN dcqcn schduler*/
+	if(m_node->GetId()==0){
+		ipHeader.SetDscp (Ipv4Header::CS1);
+	}else
+		ipHeader.SetDscp (Ipv4Header::CS6);
+	//std::cout<<"[debug] nodID="<<m_node->GetId()<<", ip dscp="<<ipHeader.GetDscp()<<std::endl;
+	/*DNN dcqcn schduler*/
 	ipHeader.SetIdentification (qp->m_ipid);
 	p->AddHeader(ipHeader);
 	// add ppp header
@@ -591,14 +670,12 @@ Ptr<Packet> RdmaHw::GetNxtPacket(Ptr<RdmaQueuePair> qp){
 }
 
 void RdmaHw::PktSent(Ptr<RdmaQueuePair> qp, Ptr<Packet> pkt, Time interframeGap){
-	if(qp->GetBytesSended()%static_cast<uint64_t>(5e6)<1000&&qp->GetBytesSended()>=static_cast<uint64_t>(1000))
+	/**************DNN DCQCN Scheduler *************/
+	if(qp->GetBytesSended()%static_cast<uint64_t>(qp->bytes_per_iteration)<1000&&qp->GetBytesSended()>=static_cast<uint64_t>(1000))
 	{
-		//qp->mlx.m_alpha = 1;
-		qp->m_rate = qp->mlx.m_targetRate;
-		std::cout<<"[dcqcn-debug]: qp->mlx.m_alpha = "<<qp->mlx.m_alpha<<",m_g = "<<m_g<<std::endl;
-		std::cout<<"[dcqcn-debug2]: qp->mlx.m_targetRate = "<<qp->mlx.m_targetRate<<",qp->m_rate = "<<qp->m_rate<<std::endl;
-		UpdateNextAvail(qp, interframeGap+Time(1e6), pkt->GetSize());
+		UpdateNextAvail(qp, interframeGap+qp->Iteration, pkt->GetSize());
 	}
+	/**************DNN DCQCN Scheduler *************/
 	else{
 		UpdateNextAvail(qp, interframeGap, pkt->GetSize());
 	}
@@ -681,7 +758,13 @@ void RdmaHw::CheckRateDecreaseMlx(Ptr<RdmaQueuePair> q){
 		}
 		if (clamp)
 			q->mlx.m_targetRate = q->m_rate;
-		q->m_rate = std::max(m_minRate, q->m_rate * (1 - q->mlx.m_alpha / 2));
+		/***************MLTCP************/
+		if (m_mltcp){
+			q->m_rate = std::max(m_minRate, q->m_rate * (1 - q->mlx.m_alpha / 2) * (q->bytes_ratio*q->S+q->T));
+		}
+		else
+		/***************MLTCP************/
+			q->m_rate = std::max(m_minRate, q->m_rate * (1 - q->mlx.m_alpha / 2));
 		// reset rate increase related things
 		q->mlx.m_rpTimeStage = 0;
 		q->mlx.m_decrease_cnp_arrived = false;
@@ -716,7 +799,12 @@ void RdmaHw::FastRecoveryMlx(Ptr<RdmaQueuePair> q){
 	#if PRINT_LOG
 	printf("%lu fast recovery: %08x %08x %u %u (%0.3lf %.3lf)->", Simulator::Now().GetTimeStep(), q->sip.Get(), q->dip.Get(), q->sport, q->dport, q->mlx.m_targetRate.GetBitRate() * 1e-9, q->m_rate.GetBitRate() * 1e-9);
 	#endif
-	q->m_rate = (q->m_rate / 2) + (q->mlx.m_targetRate / 2);
+	/**************MLTCP***************/
+	if(m_mltcp)
+		q->m_rate = (q->m_rate / 2) + (q->mlx.m_targetRate / 2)* (q->bytes_ratio*q->S+q->T);
+	else
+	/**************MLTCP***************/
+		q->m_rate = (q->m_rate / 2) + (q->mlx.m_targetRate / 2);
 	#if PRINT_LOG
 	printf("(%.3lf %.3lf)\n", q->mlx.m_targetRate.GetBitRate() * 1e-9, q->m_rate.GetBitRate() * 1e-9);
 	#endif
@@ -732,6 +820,11 @@ void RdmaHw::ActiveIncreaseMlx(Ptr<RdmaQueuePair> q){
 	q->mlx.m_targetRate += m_rai;
 	if (q->mlx.m_targetRate > dev->GetDataRate())
 		q->mlx.m_targetRate = dev->GetDataRate();
+	/**************MLTCP***************/
+	if(m_mltcp)
+		q->m_rate = (q->m_rate / 2) + (q->mlx.m_targetRate / 2)* (q->bytes_ratio*q->S+q->T);
+	else
+	/**************MLTCP***************/
 	q->m_rate = (q->m_rate / 2) + (q->mlx.m_targetRate / 2);
 	#if PRINT_LOG
 	printf("(%.3lf %.3lf)\n", q->mlx.m_targetRate.GetBitRate() * 1e-9, q->m_rate.GetBitRate() * 1e-9);

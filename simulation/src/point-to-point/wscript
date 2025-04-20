@@ -23,8 +23,6 @@ def build(bld):
 		'model/switch-mmu.cc',
 		'model/pint.cc',
         'model/cmsketch.cc',
-        'model/kv-store.cc',
-        'model/pkt-kv-table.cc',
         ]
 
     module_test = bld.create_ns3_module_test_library('point-to-point')
@@ -56,8 +54,6 @@ def build(bld):
 		'model/pint.h',
 		'helper/sim-setting.h',
         'model/cmsketch.h',
-        'model/kv-store.h',
-        'model/pkt-kv-table.h',
         ]
 
     if (bld.env['ENABLE_EXAMPLES']):

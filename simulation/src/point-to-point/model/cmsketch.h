@@ -50,13 +50,13 @@ namespace ns3 {
 typedef uint64_t* (*cms_hash_function) (unsigned int num_hashes, const char* key);
 class CountMinSketch : public Object{
 public:
-        uint32_t depth;
-        uint32_t width;
+        int32_t depth;
+        int32_t width;
         int64_t elements_added;
         double confidence;
         double error_rate;
         cms_hash_function hash_function;
-        int32_t* bins;
+        uint64_t* bins;
     CountMinSketch();
     /*  Initialize the count-min sketch based on user defined width and depth
         Alternatively, one can also pass in a custom hash function
@@ -64,7 +64,7 @@ public:
         Returns:
             CMS_SUCCESS
             CMS_ERROR   -   when unable to allocate the desired cms object or when width or depth are 0 */
-    int cms_init_alt(CountMinSketch* cms, unsigned int width, unsigned int depth, cms_hash_function hash_function);
+    int cms_init_alt(CountMinSketch* cms, int32_t width, int32_t depth, cms_hash_function hash_function);
     static __inline__ int cms_init(CountMinSketch* cms, unsigned int width, unsigned int depth) {
         return cms->cms_init_alt(cms, width, depth, NULL);
     }
@@ -135,51 +135,51 @@ public:
     */
 
     /* Add the provided key to the count-min sketch `x` times */
-    int32_t cms_add_inc(CountMinSketch* cms, const char* key, uint32_t x);
-    int32_t cms_add_inc_alt(CountMinSketch* cms, uint64_t* hashes, unsigned int num_hashes, uint32_t x);
+    uint64_t cms_add_inc(CountMinSketch* cms, const char* key, uint64_t x);
+    uint64_t cms_add_inc_alt(CountMinSketch* cms, uint64_t* hashes, unsigned int num_hashes, uint64_t x);
 
     /* Add the provided key to the count-min sketch */
-    static __inline__ int32_t cms_add(CountMinSketch* cms, const char* key) {
+    static __inline__ uint64_t cms_add(CountMinSketch* cms, const char* key) {
         return cms->cms_add_inc(cms, key, 1);
     }
-    static __inline__ int32_t cms_add_alt(CountMinSketch* cms, uint64_t* hashes, unsigned int num_hashes) {
+    static __inline__ uint64_t cms_add_alt(CountMinSketch* cms, uint64_t* hashes, unsigned int num_hashes) {
         return cms->cms_add_inc_alt(cms, hashes, num_hashes, 1);
     }
 
     /*  Remove the provided key to the count-min sketch `x` times;
         NOTE: Result Values can be negative
         NOTE: Best check method when remove is used is `cms_check_mean` */
-    int32_t cms_remove_inc(CountMinSketch* cms, const char* key, uint32_t x);
-    int32_t cms_remove_inc_alt(CountMinSketch* cms, uint64_t* hashes, unsigned int num_hashes, uint32_t x);
+    uint64_t cms_remove_inc(CountMinSketch* cms, const char* key, uint64_t x);
+    uint64_t cms_remove_inc_alt(CountMinSketch* cms, uint64_t* hashes, unsigned int num_hashes, uint64_t x);
 
     /*  Remove the provided key to the count-min sketch;
         NOTE: Result Values can be negative
         NOTE: Best check method when remove is used is `cms_check_mean` */
-    static __inline__ int32_t cms_remove(CountMinSketch* cms, const char* key) {
+    static __inline__ uint64_t cms_remove(CountMinSketch* cms, const char* key) {
         return cms->cms_remove_inc(cms, key, 1);
     }
-    static __inline__ int32_t cms_remove_alt(CountMinSketch* cms, uint64_t* hashes, unsigned int num_hashes) {
+    static __inline__ uint64_t cms_remove_alt(CountMinSketch* cms, uint64_t* hashes, unsigned int num_hashes) {
         return cms->cms_remove_inc_alt(cms, hashes, num_hashes, 1);
     }
 
     /* Determine the maximum number of times the key may have been inserted */
-    int32_t cms_check(CountMinSketch* cms, const char* key);
-    int32_t cms_check_alt(CountMinSketch* cms, uint64_t* hashes, unsigned int num_hashes);
-    static __inline__ int32_t cms_check_min(CountMinSketch* cms, const char* key) {
+    uint64_t cms_check(CountMinSketch* cms, const char* key);
+    uint64_t cms_check_alt(CountMinSketch* cms, uint64_t* hashes, unsigned int num_hashes);
+    static __inline__ uint64_t cms_check_min(CountMinSketch* cms, const char* key) {
         return cms->cms_check(cms, key);
     }
-    static __inline__ int32_t cms_check_min_alt(CountMinSketch* cms, uint64_t* hashes, unsigned int num_hashes) {
+    static __inline__ uint64_t cms_check_min_alt(CountMinSketch* cms, uint64_t* hashes, unsigned int num_hashes) {
         return cms->cms_check_alt(cms, hashes, num_hashes);
     }
 
     /*  Determine the mean number of times the key may have been inserted
         NOTE: Mean check increases the over counting but is a `better` strategy
         when removes are added and negatives are possible */
-    int32_t cms_check_mean(CountMinSketch* cms, const char* key);
-    int32_t cms_check_mean_alt(CountMinSketch* cms, uint64_t* hashes, unsigned int num_hashes);
+    uint64_t cms_check_mean(CountMinSketch* cms, const char* key);
+    uint64_t cms_check_mean_alt(CountMinSketch* cms, uint64_t* hashes, unsigned int num_hashes);
 
-    int32_t cms_check_mean_min(CountMinSketch* cms, const char* key);
-    int32_t cms_check_mean_min_alt(CountMinSketch* cms, uint64_t* hashes, unsigned int num_hashes);
+    uint64_t cms_check_mean_min(CountMinSketch* cms, const char* key);
+    uint64_t cms_check_mean_min_alt(CountMinSketch* cms, uint64_t* hashes, unsigned int num_hashes);
 
     /*  Return the hashes for the provided key based on the hashing function of
         the count-min sketch
@@ -213,7 +213,7 @@ public:
     */
     int cms_merge_into(CountMinSketch* cms, int num_sketches, ...);
 private:
-    // static int __setup_cms(CountMinSketch* cms, uint32_t width, uint32_t depth, double error_rate, double confidence, cms_hash_function hash_function);
+    // static int __setup_cms(CountMinSketch* cms, int32_t width, int32_t depth, double error_rate, double confidence, cms_hash_function hash_function);
     // static void __write_to_file(CountMinSketch* cms, FILE *fp, short on_disk);
     // static void __read_from_file(CountMinSketch* cms, FILE *fp, short on_disk, const char* filename);
     // static void __merge_cms(CountMinSketch* base, int num_sketches, va_list* args);
@@ -221,20 +221,20 @@ private:
     // static uint64_t* __default_hash(unsigned int num_hashes, const char* key);
     // static uint64_t __fnv_1a(const char* key, int seed);
     // static int __compare(const void * a, const void * b);
-    // static int32_t __safe_add(int32_t a, uint32_t b);
-    // static int32_t __safe_sub(int32_t a, uint32_t b);
-    // static int32_t __safe_add_2(int32_t a, int32_t b);
+    // static uint64_t __safe_add(uint64_t a, uint64_t b);
+    // static uint64_t __safe_sub(uint64_t a, uint64_t b);
+    // static uint64_t __safe_add_2(uint64_t a, uint64_t b);
     static int __setup_cms(CountMinSketch* cms, unsigned int width, unsigned int depth, double error_rate, double confidence, cms_hash_function hash_function) {
         cms->width = width;
         cms->depth = depth;
         cms->confidence = confidence;
         cms->error_rate = error_rate;
         cms->elements_added = 0;
-        cms->bins = (int32_t*)calloc((width * depth), sizeof(int32_t));
+        cms->bins = (uint64_t*)calloc((width * depth), sizeof(uint64_t));
         cms->hash_function = (hash_function == NULL) ? __default_hash : hash_function;
 
         if (NULL == cms->bins) {
-            fprintf(stderr, "Failed to allocate %zu bytes for bins!", ((width * depth) * sizeof(int32_t)));
+            fprintf(stderr, "Failed to allocate %zu bytes for bins!", ((width * depth) * sizeof(uint64_t)));
             return CMS_ERROR;
         }
         return CMS_SUCCESS;
@@ -244,7 +244,7 @@ private:
         unsigned long long length = cms->depth * cms->width;
         if (on_disk == 0) {
             for (unsigned long long i = 0; i < length; ++i) {
-                fwrite(&cms->bins[i], sizeof(int32_t), 1, fp);
+                fwrite(&cms->bins[i], sizeof(uint64_t), 1, fp);
             }
         } else {
             // TODO: decide if this should be done directly on disk or not
@@ -255,18 +255,18 @@ private:
             //     fwrite(&q, sizeof(int), 1, fp);
             // }
         }
-        fwrite(&cms->width, sizeof(int32_t), 1, fp);
-        fwrite(&cms->depth, sizeof(int32_t), 1, fp);
+        fwrite(&cms->width, sizeof(uint64_t), 1, fp);
+        fwrite(&cms->depth, sizeof(uint64_t), 1, fp);
         fwrite(&cms->elements_added, sizeof(int64_t), 1, fp);
     }
 
     static void __read_from_file(CountMinSketch* cms, FILE *fp, short on_disk, const char* filename) {
         /* read in the values from the file before getting the sketch itself */
-        int offset = (sizeof(int32_t) * 2) + sizeof(long);
+        int offset = (sizeof(uint64_t) * 2) + sizeof(long);
         fseek(fp, offset * -1, SEEK_END);
 
-        fread(&cms->width, sizeof(int32_t), 1, fp);
-        fread(&cms->depth, sizeof(int32_t), 1, fp);
+        fread(&cms->width, sizeof(uint64_t), 1, fp);
+        fread(&cms->depth, sizeof(uint64_t), 1, fp);
         cms->confidence = 1 - (1 / pow(2, cms->depth));
         cms->error_rate = 2 / (double) cms->width;
         fread(&cms->elements_added, sizeof(int64_t), 1, fp);
@@ -274,8 +274,8 @@ private:
         rewind(fp);
         size_t length = cms->width * cms->depth;
         if (on_disk == 0) {
-            cms->bins = (int32_t*)malloc(length * sizeof(int32_t));
-            size_t read = fread(cms->bins, sizeof(int32_t), length, fp);
+            cms->bins = (uint64_t*)malloc(length * sizeof(uint64_t));
+            size_t read = fread(cms->bins, sizeof(uint64_t), length, fp);
             if (read != length) {
                 perror("__read_from_file: ");
                 exit(1);
@@ -287,7 +287,7 @@ private:
 
     static void __merge_cms(CountMinSketch* base, int num_sketches, va_list* args) {
         int i;
-        uint32_t bin, bins = (base->width * base->depth);
+        uint64_t bin, bins = (base->width * base->depth);
 
         va_list ap;
         va_copy(ap, *args);
@@ -357,13 +357,13 @@ private:
     }
 
 
-    static int32_t __safe_add(int32_t a, uint32_t b) {
+    static uint64_t __safe_add(uint64_t a, uint64_t b) {
         if (a == INT32_MAX || a == INT32_MIN) {
             return a;
         }
 
         /* use the gcc macro if compiling with GCC, otherwise, simple overflow check */
-        int32_t c = 0;
+        uint64_t c = 0;
         #if (__has_builtin(__builtin_add_overflow)) || (defined(__GNUC__) && __GNUC__ >= 5)
             bool bl = __builtin_add_overflow(a, b, &c);
             if (bl) {
@@ -376,13 +376,13 @@ private:
         return c;
     }
 
-    static int32_t __safe_sub(int32_t a, uint32_t b) {
+    static uint64_t __safe_sub(uint64_t a, uint64_t b) {
         if (a == INT32_MAX || a == INT32_MIN) {
             return a;
         }
 
         /* use the gcc macro if compiling with GCC, otherwise, simple overflow check */
-        int32_t c = 0;
+        uint64_t c = 0;
         #if (__has_builtin(__builtin_sub_overflow)) || (defined(__GNUC__) && __GNUC__ >= 5)
             bool bl = __builtin_sub_overflow(a, b, &c);
             if (bl) {
@@ -395,7 +395,7 @@ private:
         return c;
     }
 
-    static int32_t __safe_add_2(int32_t a, int32_t b) {
+    static uint64_t __safe_add_2(uint64_t a, uint64_t b) {
         if (a == INT32_MAX || a == INT32_MIN) {
             return a;
         }
@@ -406,7 +406,7 @@ private:
             return INT32_MIN;
         else if (c >= INT32_MAX)
             return INT32_MAX;
-        return (int32_t) c;
+        return (uint64_t) c;
     }
 };
 

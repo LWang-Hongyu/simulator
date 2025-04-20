@@ -36,6 +36,9 @@ public:
 
 	bool ShouldSendCN(uint32_t ifindex, uint32_t qIndex);
 
+	/**********DNN dcqcn Scheduler *************/
+	bool ShouldMarkCN(uint32_t ifindex, uint32_t qIndex);
+	/**********DNN dcqcn Scheduler *************/
 	void ConfigEcn(uint32_t port, uint32_t _kmin, uint32_t _kmax, double _pmax);
 	void ConfigHdrm(uint32_t port, uint32_t size);
 	void ConfigNPort(uint32_t n_port);

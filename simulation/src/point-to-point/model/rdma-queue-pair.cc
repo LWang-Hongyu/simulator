@@ -66,6 +66,22 @@ RdmaQueuePair::RdmaQueuePair(uint16_t pg, Ipv4Address _sip, Ipv4Address _dip, ui
 
 	hpccPint.m_lastUpdateSeq = 0;
 	hpccPint.m_incStage = 0;
+
+	/********* MLTCP**************/
+	total_bytes=5e7;//Bytes in MLTCP
+	bytes_per_interation=5e7;//Bytes in reality
+	INIT_COMM_GAP=Time(1e7);//Gap in MLTCP
+	Interation=Time(1e7);//Bytes in reality
+	bytes_ratio=0;
+	bytes_sent=0;
+	prev_ack_tstamp=Simulator::Now();
+	inter_gap=INIT_COMM_GAP;
+	max_gap=INIT_COMM_GAP;
+	g=0.75;
+	y=0.5;
+	S=1.067;
+	T=0.267;
+	/********* MLTCP***********/
 }
 
 void RdmaQueuePair::SetSize(uint64_t size){
@@ -74,6 +90,11 @@ void RdmaQueuePair::SetSize(uint64_t size){
 
 void RdmaQueuePair::SetWin(uint32_t win){
 	m_win = win;
+}
+
+void RdmaQueuePair::SetIter(uint64_t bytes_iter,uint64_t gap){
+	bytes_per_iteration=bytes_iter;
+	Iteration=Time(gap);
 }
 
 void RdmaQueuePair::SetBaseRtt(uint64_t baseRtt){

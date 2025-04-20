@@ -108,6 +108,15 @@ namespace ns3 {
 		}
 		return false;
 	}
+	bool SwitchMmu::ShouldMarkCN(uint32_t ifindex, uint32_t qIndex){
+		if (qIndex == 0)
+			return false;
+		std::cout<<"[switch debug]: kmax="<<kmax[ifindex]<<" kmin="<<kmin[ifindex]<<" ifindex="<<ifindex<<std::endl;
+		std::cout<<"[switch debug]: egress_bytes["<<ifindex<<"]["<<qIndex<<"]="<<egress_bytes[ifindex][qIndex]<<std::endl;
+		if (egress_bytes[ifindex][qIndex] > kmin[ifindex])
+			return true;
+		return false;
+	}
 	void SwitchMmu::ConfigEcn(uint32_t port, uint32_t _kmin, uint32_t _kmax, double _pmax){
 		kmin[port] = _kmin * 1000;
 		kmax[port] = _kmax * 1000;

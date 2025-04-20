@@ -8,8 +8,6 @@
 #include "pint.h"
 
 #include "cmsketch.h"
-#include "kv-store.h"
-#include "pkt-kv-table.h"
 
 namespace ns3 {
 
@@ -32,13 +30,23 @@ class SwitchNode : public Node{
 	/***********************
 	 * DNN dcqcn Scheduler
 	 ***********************/
-	//设置两个cmsketch 一个是统计数据包的大小 一个是统计时间戳
+	//设置三个cmsketch 一个是统计数据包的大小 一个是统计时间戳 一个是每次迭代的字节数
 	CountMinSketch cms_PktSize;
 	CountMinSketch cms_TimeStamp;
+	CountMinSketch cms_State;
 
-	KVSTORE kvs;
-	TIMEKVTABLE kvt;
-	int minRemainder;
+	//KVSTORE port_flag;
+	//uint32_t run_flag;
+	//long double run_flag;
+	long double run_flag[pCnt][qCnt];
+	uint16_t tag[pCnt][qCnt];
+	uint16_t fair_factor;
+
+	void SetPortRunFlag(uint32_t port, uint32_t qIndex, long double x){run_flag[port][qIndex] = x;}
+	long double GetPortRunFlag(uint32_t port, uint32_t qIndex){return run_flag[port][qIndex];}
+	void AddPortTag(uint32_t port, uint32_t qIndex){tag[port][qIndex] += 1;}
+	void RemovePortTag(uint32_t port, uint32_t qIndex){tag[port][qIndex] = 0;}
+	uint16_t GetPortTag(uint32_t port, uint32_t qIndex){return tag[port][qIndex];}
 	/***********************
 	 * DNN dcqcn Scheduler
 	 ***********************/
@@ -61,6 +69,7 @@ public:
 
 	static TypeId GetTypeId (void);
 	SwitchNode();
+	virtual ~SwitchNode() override;
 	void SetEcmpSeed(uint32_t seed);
 	void AddTableEntry(Ipv4Address &dstAddr, uint32_t intf_idx);
 	void ClearTable();
@@ -70,9 +79,10 @@ public:
 	/***********************
 	 * DNN dcqcn Scheduler
 	 ***********************/
+	std::string uint64ToString(uint64_t num);
 	std::string uint32ToString(uint32_t num);
-	std::string uint16ToString(uint16_t num);
-	uint32_t stringToUint32(std::string str);
+	uint64_t ld_to_uint64(long double value);
+	// uint32_t stringToUint64(std::string str);
 	/***********************
 	 * DNN dcqcn Scheduler
 	 ***********************/

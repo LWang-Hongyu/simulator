@@ -13,14 +13,15 @@
 #include <cmath>
 
 #include "cmsketch.h"
-#include "kv-store.h"
-#include "pkt-kv-table.h"
 #include <typeinfo>
+#include <cstdint>
 #include <sstream>
+#include <stdlib.h>
 #include <stdexcept> // 包含异常处理
 
 #define DEPTH 7
 #define WIDTH 100000
+#define CRUX true
 
 namespace ns3 {
 
@@ -54,13 +55,16 @@ TypeId SwitchNode::GetTypeId (void)
 }
 
 SwitchNode::SwitchNode(){
+	
 	/***********************
 	 * DNN dcqcn Scheduler
 	 ***********************/
 	cms_PktSize.cms_init(&cms_PktSize, WIDTH, DEPTH);
 	cms_TimeStamp.cms_init(&cms_TimeStamp,WIDTH, DEPTH);
+	cms_State.cms_init(&cms_State,WIDTH, DEPTH);
 	fflush(stdout);
-	minRemainder = INT32_MAX;
+	fair_factor=7;
+	//run_flag = 0;
 	/***********************
 	 * DNN dcqcn Scheduler
 	 ***********************/
@@ -77,6 +81,16 @@ SwitchNode::SwitchNode(){
 		m_lastPktSize[i] = m_lastPktTs[i] = 0;
 	for (uint32_t i = 0; i < pCnt; i++)
 		m_u[i] = 0;
+	/*******DNN dcqcn scheduler */
+	for (uint32_t i = 0; i < pCnt; i++)
+		for (uint32_t k = 0; k < qCnt; k++){
+			run_flag[i][k] = 0;
+			tag[i][k] = 0;
+	}
+	/*******DNN dcqcn scheduler */
+}
+
+SwitchNode::~SwitchNode(){
 }
 
 int SwitchNode::GetOutDev(Ptr<const Packet> p, CustomHeader &ch){
@@ -134,6 +148,7 @@ void SwitchNode::SendToDev(Ptr<Packet>p, CustomHeader &ch){
 			qIndex = 0;
 		}else{
 			qIndex = (ch.l3Prot == 0x06 ? 1 : ch.udp.pg); // if TCP, put to queue 1
+			//std::cout<<"[debug] ch.udp.pg"<<(ch.udp.pg)<<std::endl;
 		}
 
 		// admission control
@@ -216,34 +231,54 @@ bool SwitchNode::SwitchReceiveFromDevice(Ptr<NetDevice> device, Ptr<Packet> pack
  * DNN dcqcn Scheduler
  ***********************/
 
-union pktSize_key
+union sk_key
 {
-    uint32_t pktsizekey;
-    char cm_PktSize_key[8];
+    uint32_t sk_key;
+    char cm_sk_key[8];
 };
 
 //将uint32_t和uint16_t转变成string
+
+uint64_t SwitchNode::ld_to_uint64(long double value) {
+    // 检查是否为负数
+    if (value < 0.0L) {
+        throw std::invalid_argument("Negative value cannot be converted to uint64_t");
+    }
+
+    // 检查是否超出 uint64_t 范围
+    if (value > static_cast<long double>(UINT64_MAX)) {
+        throw std::overflow_error("Value exceeds uint64_t maximum");
+    }
+
+    // 四舍五入到最近的整数（可选）
+    // long double rounded = std::round(value);
+
+    // 直接截断小数部分
+    return static_cast<uint64_t>(value);
+}
+
+std::string SwitchNode::uint64ToString(uint64_t num){
+	return std::to_string(num);
+}
+
 std::string SwitchNode::uint32ToString(uint32_t num){
 	std::stringstream ss;
 	ss<<num;
 	return ss.str();
 }
 
-std::string SwitchNode::uint16ToString(uint16_t num){
-	std::stringstream ss;
-	ss<<num;
-	return ss.str();
-}
-
-uint32_t SwitchNode::stringToUint32(std::string str){
-	try{
-		return static_cast<uint32_t>(std::stoul(str));
-	} catch (const std::out_of_range& e){
-		// 如果数值超出了unsigned long的范围，将抛出out_of_range异常
-        std::cerr << "Out of range: " << e.what() << '\n';
-	}
-	return 0; // 如果发生异常，返回0或选择其他错误处理方式
-}
+// uint32_t SwitchNode::stringToUint64(std::string str){
+//     try {
+//         // 使用std::stoull将字符串转换为uint64_t
+//         return std::stoull(str);
+//     } catch (const std::invalid_argument& e) {
+//         // 处理无效输入的情况，例如字符串不包含数字
+//         throw std::invalid_argument("Invalid argument: string does not represent a valid number");
+//     } catch (const std::out_of_range& e) {
+//         // 处理超出uint64_t范围的情况
+//         throw std::out_of_range("Out of range: number is too large for uint64_t");
+//     }
+// }
 /***********************
  * DNN dcqcn Scheduler
  ***********************/
@@ -257,78 +292,181 @@ void SwitchNode::SwitchNotifyDequeue(uint32_t ifIndex, uint32_t qIndex, Ptr<Pack
 		m_mmu->RemoveFromEgressAdmission(ifIndex, qIndex, p->GetSize());
 		m_bytes[inDev][ifIndex][qIndex] -= p->GetSize();
 		if (m_ecnEnabled){
+
 			bool egressCongested = m_mmu->ShouldSendCN(ifIndex, qIndex);
 			/***********************
  			 * DNN dcqcn Scheduler
 			 * The switch collects job information.
              ***********************/
+			
 			CustomHeader ch(CustomHeader::L2_Header | CustomHeader::L3_Header | CustomHeader::L4_Header);
 			p->PeekHeader(ch);
 			//用四元组来标识一条流
-
+			uint8_t ecn = ch.GetIpv4EcnBits();
 			std::string flowId = uint32ToString(ch.sip) + uint32ToString(ch.dip);
 			bool ECN_flag = false;
-			if(ch.sip < ch.dip){
-				pktSize_key temp_pktSize_key;
-                             
+			//std::cout<<"[debug] 13Port= "<<ch.l3Prot<<", FLowID="<<inDev<<std::endl;
+
+			if(ch.l3Prot == 0x6 || ch.l3Prot == 0x11){
+				//统计过路的TCP和UDP包的信息
 				uint32_t pkt_size = p->GetSize();
 				uint32_t payload_size = pkt_size - ch.GetSerializedSize();
 
-				uint32_t flow_id = stringToUint32(flowId);
-				temp_pktSize_key.pktsizekey = flow_id;//存储数据包大小的sketch
+				sk_key temp_sk_key;
+				uint64_t flow_id = atoll(flowId.c_str());// string to unit64_t
+				temp_sk_key.sk_key=flow_id;
 
-				uint64_t* pkt_hashes = cms_PktSize.cms_get_hashes_alt(&cms_PktSize,cms_PktSize.depth,temp_pktSize_key.cm_PktSize_key);
-				uint32_t pkt_size_counter = cms_PktSize.cms_check_mean(&cms_PktSize,temp_pktSize_key.cm_PktSize_key);
-				uint64_t time_size_counter = kvt.get_value(flowId);
-
-				Time now_time = Simulator::Now();
-				if(time_size_counter != 0 ){
-					uint64_t timeGap_curr;
-					timeGap_curr = now_time.GetTimeStep() - time_size_counter;
-
-					kvt.insert_value(flowId,now_time.GetTimeStep());
-					if(pkt_size_counter >= 5000000)//在不同的通信阶段
+				uint64_t pkt_size_counter = cms_PktSize.cms_check_mean(&cms_PktSize,temp_sk_key.cm_sk_key);
+				uint64_t time_counter = cms_TimeStamp.cms_check_mean(&cms_TimeStamp,temp_sk_key.cm_sk_key);
+				
+				uint64_t now = Simulator::Now().GetTimeStep();
+				//std::cout<<"[debug] ECN?= "<<(ecn == CustomHeader::EcnType::ECN_CE)<<" and Now="<<time_counter<<std::endl;
+				if(time_counter != 0 ){//如果开始统计了
+					//判断不同的iteration
+					uint64_t timeGap_curr; 
+					timeGap_curr = now - time_counter;
+					//这里因为没有写覆盖的sketch操作，所以先删除再写入
+					cms_TimeStamp.cms_remove_inc(&cms_TimeStamp,temp_sk_key.cm_sk_key,time_counter);////清空时间戳
+					cms_TimeStamp.cms_add_inc(&cms_TimeStamp,temp_sk_key.cm_sk_key,now);//写入时间戳
+					
+					//if(timeGap_curr >= 1e5 && pkt_size_counter >=1e5)//在不同的通信阶段且不是ACK
+					uint64_t dnn_totalBytes = cms_State.cms_check_mean(&cms_State,temp_sk_key.cm_sk_key);
+					//若在不同的iteration，就更新flow的state
+					if(timeGap_curr >= 1e5)
 					{
-						kvs.insert_value(flowId,pkt_size_counter);//更新迭代总字节数
-						cms_PktSize.cms_remove_inc_alt(&cms_PktSize,pkt_hashes,cms_PktSize.depth,pkt_size_counter);//清空存储数据包大小的sketch
-						cms_PktSize.cms_add_inc_alt(&cms_PktSize,pkt_hashes,cms_PktSize.depth,payload_size);
+						//更新一次迭代的总字节数
+						cms_State.cms_remove_inc(&cms_State,temp_sk_key.cm_sk_key,dnn_totalBytes);////清空上次的计数
+						cms_State.cms_add_inc(&cms_State,temp_sk_key.cm_sk_key,pkt_size_counter);//写入这次的计数
+						
+						//开始新一轮的统计
+						cms_PktSize.cms_remove_inc(&cms_PktSize,temp_sk_key.cm_sk_key,pkt_size_counter);
+						cms_PktSize.cms_add_inc(&cms_PktSize,temp_sk_key.cm_sk_key,payload_size);
 					}else{
-						cms_PktSize.cms_add_inc_alt(&cms_PktSize,pkt_hashes,cms_PktSize.depth,payload_size);
+						cms_PktSize.cms_add_inc(&cms_PktSize,temp_sk_key.cm_sk_key,payload_size);
 					}
-
-					uint32_t bytes_send = cms_PktSize.cms_check_mean(&cms_PktSize,temp_pktSize_key.cm_PktSize_key);
-
-					uint32_t dnn_totalBytes = kvs.get_value(flowId);
-					if(dnn_totalBytes != 0 ){
-						int remainder_bytes = dnn_totalBytes - bytes_send;
-						if(remainder_bytes < minRemainder){
-							minRemainder = remainder_bytes;
-						}else{
-							if((payload_size * 1e9 / timeGap_curr) > 6e9)
-								ECN_flag = true;
-						}
-						if(minRemainder <= 60 ){
-							minRemainder = INT32_MAX;
-						}
+					
+					uint64_t bytes_send = cms_PktSize.cms_check_mean(&cms_PktSize,temp_sk_key.cm_sk_key);
+					
+					//进行调度和判断
+					if(dnn_totalBytes != 0 && !(ecn == Ipv4Header::CE) && ((payload_size * 8e9 / timeGap_curr) > 1e8)){
+						long double run_flag = GetPortRunFlag(ifIndex, qIndex);
+						uint64_t remainder_bytes;
+						if(dnn_totalBytes > bytes_send)
+							remainder_bytes = dnn_totalBytes - bytes_send;
+						else remainder_bytes=0;
+						/************LAS*************/
+						////run_flag is running FlowID
+						// if(run_flag == 0)
+						// 	run_flag=flow_id;
+						// else if(run_flag==flow_id){
+						// 	if(remainder_bytes<1000){
+						// 		run_flag = 0;
+						//		SetPortRunFlag(ifIndex, qIndex,run_flag);
+						//}
+						// }else{
+						// 		ECN_flag=true;
+						// }
+						/************LAS*************/
+						// /************SJF*************/
+						// // //run_flag is minremainder_bytes
+						// if(remainder_bytes < run_flag && remainder_bytes > 1000){
+						// 		run_flag = remainder_bytes;
+						// 		SetPortRunFlag(ifIndex, qIndex,run_flag);
+						// }else{
+						// 	if(remainder_bytes <= 1000 ){
+						// 		run_flag = 0;
+						// 		SetPortRunFlag(ifIndex, qIndex,run_flag);
+						// 	}
+						// 	else 
+						// 		ECN_flag = true;
+						// }
+						// /************SJF*************/
+						/************SJF*************/
+						// //run_flag is minremainder_bytes percent
+						// double ratio=static_cast<double>(remainder_bytes)/static_cast<double>(dnn_totalBytes);
+						// if(run_flag==0||(ratio< run_flag && remainder_bytes > 1000)){
+						// 	run_flag = ratio;
+						// 	SetPortRunFlag(ifIndex, qIndex,run_flag);
+						// }else{
+						// 	if(remainder_bytes <= 1500 ){
+						// 		run_flag = 0;
+						// 		SetPortRunFlag(ifIndex, qIndex,run_flag);
+						// 	}
+						// 	//else if((payload_size * 1e9 / timeGap_curr) > 6e9)
+						// 	else
+						// 		ECN_flag = true;
+						// }
+						/************SJF*************/
+						/************CRUX*************/
+						//run_flag is running FlowID							
+						// if(run_flag==0||run_flag==flow_id){
+						// 	if(remainder_bytes>1000){
+						// 		run_flag=flow_id;
+						// 		SetPortRunFlag(ifIndex, qIndex,run_flag);
+						// 	}
+						// 	else{
+						// 		run_flag=0;
+						// 		AddPortTag(ifIndex, qIndex);
+						// 		SetPortRunFlag(ifIndex, qIndex,run_flag);
+						// 	}
+						// }else {
+						// 	sk_key temp_last_key;
+						// 	temp_last_key.sk_key=ld_to_uint64(run_flag);
+						// 	uint64_t last = cms_State.cms_check_mean(&cms_State,temp_last_key.cm_sk_key);
+						// 	if(dnn_totalBytes>last){
+						// 		if(remainder_bytes>1000){
+						// 			run_flag=flow_id;
+						// 			SetPortRunFlag(ifIndex, qIndex,run_flag);
+						// 		}
+						// 	}
+						// 	else{
+						// 		ECN_flag=true;
+						// 	}
+						// }
+						/************CRUX*************/
+						// if(GetPortTag(ifIndex, qIndex)>fair_factor){
+						// 	ECN_flag=(!ECN_flag);
+						// }else if(GetPortTag(ifIndex, qIndex)>=10)
+						// 	RemovePortTag(ifIndex, qIndex);
+						
+						Ptr<QbbNetDevice> device = DynamicCast<QbbNetDevice>(m_devices[inDev]);
+						//std::cout<<"[debug] qp->sip="<<ch.sip<<", qp->dip="<<ch.dip<<std::endl;
 						if(ECN_flag){
-							std::cout<<"[debug1]: flowID = "<<flowId<<",dnn_totalBytes = "<<dnn_totalBytes<<",bytes_send = "<<bytes_send<<std::endl;
-							std::cout<<"[debug2]: remainder_bytes = "<<remainder_bytes<<",minRemainder = "<<minRemainder<<std::endl;
-							std::cout<<"[debug3]: ECN_flag = "<<ECN_flag<<",now_time = "<<now_time.GetTimeStep()<<std::endl;
-							std::cout<<std::endl;
+							// std::cout<<"[debug1]: flowID = "<<flowId<<",dnn_totalBytes = "<<dnn_totalBytes<<",bytes_send = "<<bytes_send<<std::endl;
+							// std::cout<<"[debug2]: remainder_bytes = "<<remainder_bytes<<",run_flag = "<<run_flag<<std::endl;
+							// std::cout<<"[debug3]: ECN_flag = "<<ECN_flag<<",now = "<<now<<std::endl;
+							// std::cout<<"[debug4]: timeGap_curr="<<timeGap_curr<<std::endl;
+							// std::cout<<"[debug5]: time_counter="<<time_counter<<std::endl;
+							// std::cout<<"[debug6]: m_node_GetID= "<<device->GetNode()->GetId()<<std::endl;
+							// std::cout<<"[debug7]: inDev="<<inDev<<std::endl;
+							// std::cout<<"[debug8]: ifIndex, qIndex="<<ifIndex<<", "<<qIndex<<std::endl;
+							// std::cout<<"[debug9]: GetPortRunFlag="<<GetPortRunFlag(ifIndex, qIndex)<<std::endl;
+							// std::cout<<std::endl;
 						}else{
-							std::cout<<"[debug4]: flowID = "<<flowId<<",dnn_totalBytes = "<<dnn_totalBytes<<",bytes_send = "<<bytes_send<<std::endl;
-							std::cout<<"[debug5]: remainder_bytes = "<<remainder_bytes<<",minRemainder = "<<minRemainder<<std::endl;
-							std::cout<<"[debug6]: ECN_flag = "<<ECN_flag<<",now_time = "<<now_time.GetTimeStep()<<std::endl;
-							std::cout<<"[debug]: pkt_ratio = "<<payload_size * 1e9 / timeGap_curr<<std::endl;
-							std::cout<<std::endl;
+							// std::cout<<"[debug4]: flowID = "<<flowId<<",dnn_totalBytes = "<<dnn_totalBytes<<",bytes_send = "<<bytes_send<<std::endl;
+							// std::cout<<"[debug5]: remainder_bytes = "<<remainder_bytes<<",run_flag = "<<run_flag<<std::endl;
+							// std::cout<<"[debug6]: ECN_flag = "<<ECN_flag<<",now = "<<now<<std::endl;
+							// std::cout<<"[debug]: pkt_ratio = "<<payload_size * 8e9 / timeGap_curr<<std::endl;
+							// std::cout<<std::endl;
 						}
 					}
-				}else{
-					cms_PktSize.cms_add_inc_alt(&cms_PktSize,pkt_hashes,cms_PktSize.depth,payload_size);
-					kvt.insert_value(flowId,now_time.GetTimeStep());
-				}
+					std::cout<<"[debug]: pkt_ratio = "<<payload_size * 8e9 / timeGap_curr<<std::endl;
+					std::cout<<"[debug]: inDev="<<inDev<<std::endl;
+					std::cout<<"[debug]: ifIndex, qIndex="<<ifIndex<<", "<<qIndex<<std::endl<<std::endl;		
+
+				}else{//第一次统计就直接记录
+					cms_PktSize.cms_add_inc(&cms_PktSize,temp_sk_key.cm_sk_key,payload_size);
+					cms_TimeStamp.cms_remove_inc(&cms_TimeStamp,temp_sk_key.cm_sk_key,time_counter);////清空时间戳
+					cms_TimeStamp.cms_add_inc(&cms_TimeStamp,temp_sk_key.cm_sk_key,now);//写入时间戳
+					
+				}			
 			}
-			if (egressCongested || ECN_flag){
+			//if (egressCongested || (ECN_flag && m_mmu->ShouldMarkCN(ifIndex, qIndex))){
+			if (egressCongested || (ECN_flag)){
+			/***********************
+			 * DNN dcqcn Scheduler
+			 ***********************/
+			//if (egressCongested ){
 				PppHeader ppp;
 				Ipv4Header h;
 				p->RemoveHeader(ppp);

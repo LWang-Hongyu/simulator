@@ -295,7 +295,7 @@ namespace ns3 {
 			}
 			return;
 		}else{   //switch, doesn't care about qcn, just send
-			p = m_queue->DequeueRR(m_paused);		//this is round-robin
+			p = m_queue->DequeueRR(m_paused);		//DequeuePriority;DequeueRR;DequeueWRR
 			if (p != 0){
 				m_snifferTrace(p);
 				m_promiscSnifferTrace(p);
@@ -310,9 +310,6 @@ namespace ns3 {
 					m_node->SwitchNotifyDequeue(m_ifIndex, qIndex, p);
 					p->RemovePacketTag(t);
 				}else{
-					/***************UnfairDNNSchduler*********/
-					
-					/***************UnfairDNNSchduler*********/
 					m_node->SwitchNotifyDequeue(m_ifIndex, qIndex, p);
 					p->RemovePacketTag(t);
 				}
