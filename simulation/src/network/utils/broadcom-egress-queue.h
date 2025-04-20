@@ -39,6 +39,10 @@ namespace ns3 {
 		virtual ~BEgressQueue();
 		bool Enqueue(Ptr<Packet> p, uint32_t qIndex);
 		Ptr<Packet> DequeueRR(bool paused[]);
+		/*DNN dcqcn scheduler*/
+		Ptr<Packet> DequeuePriority(bool paused[]);
+		Ptr<Packet> DequeueWRR(bool paused[]);
+		/*DNN dcqcn scheduler*/
 		uint32_t GetNBytes(uint32_t qIndex) const;
 		uint32_t GetNBytesTotal() const;
 		uint32_t GetLastQueue();
@@ -49,6 +53,10 @@ namespace ns3 {
 	private:
 		bool DoEnqueue(Ptr<Packet> p, uint32_t qIndex);
 		Ptr<Packet> DoDequeueRR(bool paused[]);
+		/*DNN dcqcn scheduler*/
+		Ptr<Packet> DoDequeuePriority(bool paused[]);
+		Ptr<Packet> DoDequeueWRR(bool paused[]);
+		/*DNN dcqcn scheduler*/
 		//for compatibility
 		virtual bool DoEnqueue(Ptr<Packet> p);
 		virtual Ptr<Packet> DoDequeue(void);
@@ -59,6 +67,12 @@ namespace ns3 {
 		uint32_t m_rrlast;
 		uint32_t m_qlast;
 		std::vector<Ptr<Queue> > m_queues; // uc queues
+		/*DNN dcqcn scheduler*/
+		std::vector<uint8_t> m_weights = {7,6,5,4,3,2,1};  // 7:6:5:4:3:2:1权重配置
+		std::vector<uint8_t> m_remaining = m_weights;      // 剩余权重计数器
+		uint32_t m_lastIndex = 0;                           // 轮询起始位置
+
+		/*DNN dcqcn scheduler*/
 	};
 
 } // namespace ns3

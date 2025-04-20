@@ -1,20 +1,20 @@
 /* -*- Mode:C++; c-file-style:"gnu"; indent-tabs-mode:nil; -*- */
 /*
-* Copyright (c) 2006 Georgia Tech Research Corporation, INRIA
-*
-* This program is free software; you can redistribute it and/or modify
-* it under the terms of the GNU General Public License version 2 as
-* published by the Free Software Foundation;
-*
-* This program is distributed in the hope that it will be useful,
-* but WITHOUT ANY WARRANTY; without even the implied warranty of
-* MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-* GNU General Public License for more details.
-*
-* You should have received a copy of the GNU General Public License
-* along with this program; if not, write to the Free Software
-* Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
-*/
+ * Copyright (c) 2006 Georgia Tech Research Corporation, INRIA
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation;
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ */
 #include <iostream>
 #include <stdio.h>
 #include "ns3/log.h"
@@ -27,31 +27,30 @@
 
 NS_LOG_COMPONENT_DEFINE("BEgressQueue");
 
-namespace ns3 {
+namespace ns3
+{
 
 	NS_OBJECT_ENSURE_REGISTERED(BEgressQueue);
 
 	TypeId BEgressQueue::GetTypeId(void)
 	{
 		static TypeId tid = TypeId("ns3::BEgressQueue")
-			.SetParent<Queue>()
-			.AddConstructor<BEgressQueue>()
-			.AddAttribute("MaxBytes",
-				"The maximum number of bytes accepted by this BEgressQueue.",
-				DoubleValue(1000.0 * 1024 * 1024),
-				MakeDoubleAccessor(&BEgressQueue::m_maxBytes),
-				MakeDoubleChecker<double>())
-			.AddTraceSource ("BeqEnqueue", "Enqueue a packet in the BEgressQueue. Multiple queue",
-					MakeTraceSourceAccessor (&BEgressQueue::m_traceBeqEnqueue))
-			.AddTraceSource ("BeqDequeue", "Dequeue a packet in the BEgressQueue. Multiple queue",
-					MakeTraceSourceAccessor (&BEgressQueue::m_traceBeqDequeue))
-			;
+								.SetParent<Queue>()
+								.AddConstructor<BEgressQueue>()
+								.AddAttribute("MaxBytes",
+											  "The maximum number of bytes accepted by this BEgressQueue.",
+											  DoubleValue(1000.0 * 1024 * 1024),
+											  MakeDoubleAccessor(&BEgressQueue::m_maxBytes),
+											  MakeDoubleChecker<double>())
+								.AddTraceSource("BeqEnqueue", "Enqueue a packet in the BEgressQueue. Multiple queue",
+												MakeTraceSourceAccessor(&BEgressQueue::m_traceBeqEnqueue))
+								.AddTraceSource("BeqDequeue", "Dequeue a packet in the BEgressQueue. Multiple queue",
+												MakeTraceSourceAccessor(&BEgressQueue::m_traceBeqDequeue));
 
 		return tid;
 	}
 
-	BEgressQueue::BEgressQueue() :
-		Queue()
+	BEgressQueue::BEgressQueue() : Queue()
 	{
 		NS_LOG_FUNCTION_NOARGS();
 		m_bytesInQueueTotal = 0;
@@ -69,11 +68,11 @@ namespace ns3 {
 	}
 
 	bool
-		BEgressQueue::DoEnqueue(Ptr<Packet> p, uint32_t qIndex)
+	BEgressQueue::DoEnqueue(Ptr<Packet> p, uint32_t qIndex)
 	{
 		NS_LOG_FUNCTION(this << p);
 
-		if (m_bytesInQueueTotal + p->GetSize() < m_maxBytes)  //infinite queue
+		if (m_bytesInQueueTotal + p->GetSize() < m_maxBytes) // infinite queue
 		{
 			m_queues[qIndex]->Enqueue(p);
 			m_bytesInQueueTotal += p->GetSize();
@@ -86,8 +85,152 @@ namespace ns3 {
 		return true;
 	}
 
+	/*DNN dcqcn scheduler*/
 	Ptr<Packet>
-		BEgressQueue::DoDequeueRR(bool paused[]) //this is for switch only
+	BEgressQueue::DequeuePriority(bool paused[])
+	{
+		NS_LOG_FUNCTION(this);
+		Ptr<Packet> packet = DoDequeuePriority(paused);
+		if (packet != 0)
+		{
+			NS_ASSERT(m_nBytes >= packet->GetSize());
+			NS_ASSERT(m_nPackets > 0);
+			m_nBytes -= packet->GetSize();
+			m_nPackets--;
+			NS_LOG_LOGIC("m_traceDequeue (packet)");
+			m_traceDequeue(packet);
+		}
+		return packet;
+	}
+
+	Ptr<Packet>
+	BEgressQueue::DoDequeuePriority(bool paused[])
+	{
+		NS_LOG_FUNCTION(this);
+
+		if (m_bytesInQueueTotal == 0)
+		{
+			NS_LOG_LOGIC("Queue empty");
+			return 0;
+		}
+		// 从最高优先级队列（0）开始扫描
+		for (uint32_t qIndex = 0; qIndex < qCnt; qIndex++)
+		{
+			// 跳过被PFC暂停的队列
+			if (paused[qIndex])
+				continue;
+			// 检查当前队列是否有数据
+			if (m_queues[qIndex]->GetNPackets() > 0)
+			{
+				Ptr<Packet> p = m_queues[qIndex]->Dequeue();
+				m_traceBeqDequeue(p, qIndex);
+				m_bytesInQueueTotal -= p->GetSize();
+				m_bytesInQueue[qIndex] -= p->GetSize();
+				m_qlast = qIndex; // 记录最后发送的队列
+				return p;
+			}
+		}
+		NS_LOG_LOGIC("Nothing can be sent");
+		return 0;
+	}
+
+	Ptr<Packet>
+	BEgressQueue::DequeueWRR(bool paused[])
+	{
+		NS_LOG_FUNCTION(this);
+		Ptr<Packet> packet = DoDequeueWRR(paused);
+		if (packet != 0)
+		{
+			NS_ASSERT(m_nBytes >= packet->GetSize());
+			NS_ASSERT(m_nPackets > 0);
+			m_nBytes -= packet->GetSize();
+			m_nPackets--;
+			NS_LOG_LOGIC("m_traceDequeue (packet)");
+			m_traceDequeue(packet);
+		}
+		return packet;
+	}
+
+	Ptr<Packet>
+	BEgressQueue::DoDequeueWRR(bool paused[])
+	{
+		NS_LOG_FUNCTION(this);
+
+		if (m_bytesInQueueTotal == 0)
+		{
+			NS_LOG_LOGIC("Queue empty");
+			return 0;
+		}
+
+		// 权重周期重置检测
+		if (std::all_of(m_remaining.begin(), m_remaining.end(), [](uint8_t v)
+						{ return v == 0; }))
+		{
+			NS_LOG_LOGIC("Reset weight counters");
+			m_remaining = m_weights;
+		}
+
+		if (m_queues[0]->GetNPackets() > 0) // 0 is the highest priority
+		{
+			Ptr<Packet> p = m_queues[0]->Dequeue();
+			m_traceBeqDequeue(p, 0);
+			m_bytesInQueueTotal -= p->GetSize();
+			m_bytesInQueue[0] -= p->GetSize();
+			NS_LOG_LOGIC("[send ack] : " << p);
+			// 更新统计信息...
+			return p; // 立即中断当前调度
+		}
+
+		// 加权轮询逻辑
+		uint32_t checked = 0;
+		while (checked < (qCnt - 1))
+		{
+			uint32_t qIndex = (m_lastIndex + checked) % (qCnt - 1);
+			checked++;
+
+			// 跳过暂停队列
+			if (paused[qIndex])
+			{
+				NS_LOG_LOGIC("Queue " << qIndex << " paused, skip");
+				continue;
+			}
+
+			// 权重和包存在性检查
+			if (m_remaining[qIndex] > 0 && m_queues[qIndex]->GetNPackets() > 0)
+			{
+				Ptr<Packet> p = m_queues[qIndex]->Dequeue();
+				m_remaining[qIndex]--;					 // 消耗权重
+				m_lastIndex = (qIndex + 1) % (qCnt - 1); // 更新轮询起点
+
+				// 日志记录（原逻辑保留）
+				m_traceBeqDequeue(p, qIndex);
+				m_bytesInQueueTotal -= p->GetSize();
+				m_bytesInQueue[qIndex] -= p->GetSize();
+				m_qlast = qIndex;
+
+				NS_LOG_LOGIC("Popped " << p);
+				NS_LOG_LOGIC("Remaining weights: "
+							 << (int)m_remaining[0] << "|"
+							 << (int)m_remaining[1] << "|"
+							 << (int)m_remaining[2] << "|"
+							 << (int)m_remaining[3] << "|"
+							 << (int)m_remaining[4] << "|"
+							 << (int)m_remaining[5] << "|"
+							 << (int)m_remaining[6]);
+				NS_LOG_LOGIC("Number bytes " << m_bytesInQueueTotal);
+
+				return p;
+			}
+		}
+
+		NS_LOG_LOGIC("Nothing can be sent");
+		return 0;
+	}
+
+	/*DNN dcqcn scheduler*/
+
+	Ptr<Packet>
+	BEgressQueue::DoDequeueRR(bool paused[]) // this is for switch only
 	{
 		NS_LOG_FUNCTION(this);
 
@@ -99,7 +242,7 @@ namespace ns3 {
 		bool found = false;
 		uint32_t qIndex;
 
-		if (m_queues[0]->GetNPackets() > 0) //0 is the highest priority
+		if (m_queues[0]->GetNPackets() > 0) // 0 is the highest priority
 		{
 			found = true;
 			qIndex = 0;
@@ -110,7 +253,7 @@ namespace ns3 {
 			{
 				for (qIndex = 1; qIndex <= qCnt; qIndex++)
 				{
-					if (!paused[(qIndex + m_rrlast) % qCnt] && m_queues[(qIndex + m_rrlast) % qCnt]->GetNPackets() > 0)  //round robin
+					if (!paused[(qIndex + m_rrlast) % qCnt] && m_queues[(qIndex + m_rrlast) % qCnt]->GetNPackets() > 0) // round robin
 					{
 						found = true;
 						break;
@@ -138,8 +281,7 @@ namespace ns3 {
 		return 0;
 	}
 
-	bool
-		BEgressQueue::Enqueue(Ptr<Packet> p, uint32_t qIndex)
+	bool BEgressQueue::Enqueue(Ptr<Packet> p, uint32_t qIndex)
 	{
 		NS_LOG_FUNCTION(this << p);
 		//
@@ -163,7 +305,7 @@ namespace ns3 {
 	}
 
 	Ptr<Packet>
-		BEgressQueue::DequeueRR(bool paused[])
+	BEgressQueue::DequeueRR(bool paused[])
 	{
 		NS_LOG_FUNCTION(this);
 		Ptr<Packet> packet = DoDequeueRR(paused);
@@ -179,12 +321,11 @@ namespace ns3 {
 		return packet;
 	}
 
-	bool
-		BEgressQueue::DoEnqueue(Ptr<Packet> p)	//for compatiability
+	bool BEgressQueue::DoEnqueue(Ptr<Packet> p) // for compatiability
 	{
 		std::cout << "Warning: Call Broadcom queues without priority\n";
 		uint32_t qIndex = 0;
-		NS_LOG_FUNCTION(this << p);
+		//NS_LOG_FUNCTION(this << p);
 		if (m_bytesInQueueTotal + p->GetSize() < m_maxBytes)
 		{
 			m_queues[qIndex]->Enqueue(p);
@@ -194,22 +335,19 @@ namespace ns3 {
 		else
 		{
 			return false;
-
 		}
 		return true;
 	}
 
-
 	Ptr<Packet>
-		BEgressQueue::DoDequeue(void)
+	BEgressQueue::DoDequeue(void)
 	{
 		NS_ASSERT_MSG(false, "BEgressQueue::DoDequeue not implemented");
 		return 0;
 	}
 
-
 	Ptr<const Packet>
-		BEgressQueue::DoPeek(void) const	//DoPeek doesn't work for multiple queues!!
+	BEgressQueue::DoPeek(void) const // DoPeek doesn't work for multiple queues!!
 	{
 		std::cout << "Warning: Call Broadcom queues without priority\n";
 		NS_LOG_FUNCTION(this);
@@ -223,22 +361,20 @@ namespace ns3 {
 	}
 
 	uint32_t
-		BEgressQueue::GetNBytes(uint32_t qIndex) const
+	BEgressQueue::GetNBytes(uint32_t qIndex) const
 	{
 		return m_bytesInQueue[qIndex];
 	}
 
-
 	uint32_t
-		BEgressQueue::GetNBytesTotal() const
+	BEgressQueue::GetNBytesTotal() const
 	{
 		return m_bytesInQueueTotal;
 	}
 
 	uint32_t
-		BEgressQueue::GetLastQueue()
+	BEgressQueue::GetLastQueue()
 	{
 		return m_qlast;
 	}
-
 }
